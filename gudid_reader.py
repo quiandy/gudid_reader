@@ -1,14 +1,21 @@
+import argparse
+import multiprocessing
 import urllib.request
-from html.parser import HTMLParser
+import html.parser
 import csv
-import sys
 
-input_file = sys.argv[1]
+argparser = argparse.ArgumentParser(prog='gudid reader',
+                                          description='Python script calling the accessgudid website to obtain info on a given catalogue number')
 
-class GUDIDParser(HTMLParser):
-   device_number = ""
-   brand_name = ""
-   gmdn = ""
+argparser.add_argument("-i", "--input", required=True, help="csv file containing in the first columns the catalogue numbers to search")
+argparser.add_argument("-o", "--output", default="output.csv", help="csv file in which to dump outputs")
+args = argparser.parse_args()
+
+class GUDIDParser(html.parser.HTMLParser):
+   device_number = "NOT FOUND"
+   brand_name = "NOT FOUND"
+   description = "NOT FOUND"
+   gmdn = "NOT FOUND"
 
    parse_ids = False
    parse_description = False
@@ -40,20 +47,37 @@ class GUDIDParser(HTMLParser):
                self.gmdn = data.strip("\\t\\n").replace("(1)","").strip()
 
 base_url = 'https://accessgudid.nlm.nih.gov/devices/search?query='
-#catalog_number = '187702735'
+catalog_number_list = None
 
-print("Catalog Number,Device Number,Brand Name,Description,GMDN")
+def getData(catalog_number):
+   response = urllib.request.urlopen(base_url + catalog_number)
+   parser = GUDIDParser()
+   parser.feed(str(response.read()))
+   parser.close()
+   return [catalog_number, parser.device_number, parser.brand_name, parser.description, parser.gmdn]
 
-with open(input_file) as csvfile:
-   reader = csv.reader(csvfile, delimiter=',')
-   header_row = True
-   for row in reader:
-      if header_row:
-         header_row = False
-      else:
-         catalog_number = row[0]
-         response = urllib.request.urlopen(base_url + catalog_number)
-         parser = GUDIDParser()
-         parser.feed(str(response.read()))
-         parser.close()
-   print(catalog_number + "," + parser.device_number + "," + parser.brand_name + "," + parser.description + "," + parser.gmdn)
+if __name__ == '__main__':
+
+   #catalog_number = '187702735'
+   with open(args.input) as csv_input:
+      
+      reader = csv.reader(csv_input, delimiter=',')
+      catalog_number_list = [row[0] for row in reader]
+      #remove first element (haeader)
+      catalog_number_list.pop(0)
+      
+   total_catalog_numbers = len(catalog_number_list)
+   print("Found {0} rows to fill, starting...".format(total_catalog_numbers ))
+
+   with open(args.output, 'w') as csv_output:
+      
+      writer = csv.writer(csv_output)
+      header = ['Catalog Number','Device Number','Brand Name','Description','GMDN']
+      writer.writerow(header)
+      completed_items = 0
+
+      with multiprocessing.Pool() as pool:
+         for result in pool.imap(getData, catalog_number_list):
+            completed_items = completed_items + 1         
+            writer.writerow(result)
+            print("Completed {0} items, {1} more to go".format(completed_items, total_catalog_numbers - completed_items))
